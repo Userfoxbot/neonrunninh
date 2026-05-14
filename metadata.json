@@ -1,0 +1,6 @@
+{
+  "name": "Coin Runner",
+  "description": "An endless running game where the player jumps over obstacles to collect coins.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

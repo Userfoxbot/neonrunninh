@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitives
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isValidLeaderboardEntry(data) {
+      return data.keys().hasAll(['userId', 'username', 'highScore', 'updatedAt']) &&
+             data.keys().size() == 4 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.username is string && data.username.size() <= 128 &&
+             data.highScore is number && data.highScore >= 0 &&
+             data.updatedAt == request.time;
+    }
+
+    match /leaderboard/{userId} {
+      // Allow any user to read the leaderboard
+      allow read: if true;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       userId == request.auth.uid &&
+                       isValidLeaderboardEntry(incoming()) &&
+                       incoming().userId == request.auth.uid;
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       userId == request.auth.uid &&
+                       existing().userId == request.auth.uid &&
+                       isValidLeaderboardEntry(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().highScore >= existing().highScore &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['username', 'highScore', 'updatedAt']);
+    }
+  }
+}

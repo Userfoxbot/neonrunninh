@@ -1,0 +1,37 @@
+{
+  "entities": {
+    "LeaderboardEntry": {
+      "title": "Leaderboard Entry",
+      "description": "Represents a user's high score on the leaderboard.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User's unique identifier (Firebase Auth UID or Telegram ID if authenticated)."
+        },
+        "username": {
+          "type": "string",
+          "description": "User's display name or Telegram username."
+        },
+        "highScore": {
+          "type": "number",
+          "description": "The user's highest score achieved."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last score update."
+        }
+      },
+      "required": ["userId", "username", "highScore", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "leaderboard": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardEntry"
+      },
+      "description": "Stores the highest scores for each user."
+    }
+  }
+}
