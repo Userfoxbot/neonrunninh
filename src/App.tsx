@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
   Play, RotateCcw, Wallet, Gamepad2, Gift, 
-  CircleDollarSign, Clock, Trophy, ChevronRight, Users, ListTodo, CheckCircle2, CreditCard
+  CircleDollarSign, Clock, ChevronRight, ListTodo, CheckCircle2, CreditCard,
+  Video, Sparkles, Heart, Coffee
 } from 'lucide-react';
-import { db, auth, handleFirestoreError, OperationType, signInWithGoogle } from './firebase';
-import { collection, query, orderBy, limit, onSnapshot, doc, setDoc, getDoc, serverTimestamp, getDocs } from 'firebase/firestore';
 
 const CANVAS_WIDTH = 600;
 const CANVAS_HEIGHT = 400;
@@ -15,6 +14,7 @@ declare global {
   interface Window {
     Telegram?: {
       WebApp?: {
+        openTelegramLink?: (url: string) => void;
         initDataUnsafe?: {
           user?: {
             id: number;
@@ -28,34 +28,7 @@ declare global {
   }
 }
 
-const getTelegramUsername = () => {
-  const user = window.Telegram?.WebApp?.initDataUnsafe?.user;
-  if (user) {
-    return user.username || user.first_name || `User${user.id}`;
-  }
-  return 'Anonymous Player'; // Fallback
-};
 
-async function saveHighScoreToLeaderboard(newScore: number) {
-  if (!auth.currentUser) return;
-  const uid = auth.currentUser.uid;
-  const username = getTelegramUsername();
-  
-  try {
-    const docRef = doc(db, 'leaderboard', uid);
-    const docSnap = await getDoc(docRef);
-    if (!docSnap.exists() || docSnap.data().highScore < newScore) {
-      await setDoc(docRef, {
-        userId: uid,
-        username: username,
-        highScore: newScore,
-        updatedAt: serverTimestamp()
-      });
-    }
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, 'leaderboard');
-  }
-}
 
 
 interface Entity {
@@ -70,7 +43,12 @@ interface GameProps {
   onReward: (amount: number) => void;
 }
 
-function GameView({ onReward }: GameProps) {
+interface GameViewProps extends GameProps {
+  onWatchAd: () => void;
+  adCooldown: number;
+}
+
+function GameView({ onReward, onWatchAd, adCooldown }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [gameState, setGameState] = useState<'START' | 'PLAYING' | 'GAME_OVER'>('START');
   const [score, setScore] = useState(0);
@@ -264,7 +242,6 @@ function GameView({ onReward }: GameProps) {
           if (state.score > highScore) {
             setHighScore(state.score);
             localStorage.setItem('runner_highscore', state.score.toString());
-            saveHighScoreToLeaderboard(state.score);
           }
           // Grant funds to wallet
           if (state.score > 0) {
@@ -415,10 +392,36 @@ function GameView({ onReward }: GameProps) {
         )}
       </div>
 
-      <div className="mt-8 flex flex-col items-center text-center">
-        <p className="text-zinc-500 text-sm font-medium mb-1 flex items-center">
-           Tap screen or hit <kbd className="bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded text-zinc-300 mx-1 ml-2 font-mono text-xs shadow-inner">SPACE</kbd> to jump
+      <div className="mt-5 flex flex-col items-center text-center w-full max-w-lg px-2">
+        <p className="text-zinc-500 text-xs font-medium mb-3 flex items-center">
+           Tap screen or hit <kbd className="bg-zinc-800/80 border border-zinc-700/60 px-2 py-0.5 rounded text-zinc-400 mx-1 ml-1.5 font-mono text-[10px] shadow-inner">SPACE</kbd> to jump
         </p>
+
+        {/* Ads Promotion Button */}
+        <button
+          onClick={onWatchAd}
+          disabled={adCooldown > 0}
+          className="w-full bg-zinc-900/40 hover:bg-zinc-900/80 border border-zinc-800/60 hover:border-cyan-500/40 rounded-2xl p-3.5 flex items-center justify-between transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed group relative overflow-hidden"
+        >
+          <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500/80 group-hover:bg-cyan-400 transition-all" />
+          
+          <div className="flex items-center gap-2.5 pl-1.5 pointer-events-none">
+             <div className="bg-cyan-500/10 p-2 rounded-xl text-cyan-400 border border-cyan-500/20 group-hover:scale-105 transition-all">
+               <Video className="w-4 h-4" />
+             </div>
+             <div className="text-left">
+               <span className="font-bold text-xs text-zinc-200 flex items-center gap-1.5">
+                 Watch Ads
+                 <span className="text-[9px] bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 px-1.5 py-0.5 rounded uppercase font-black tracking-widest leading-none">+350</span>
+               </span>
+               <div className="text-zinc-500 text-[11px] mt-0.5 font-medium">Earn +350 $RUN tokens instantly</div>
+             </div>
+          </div>
+          
+          <div className="flex items-center gap-1 font-mono text-xs font-black text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-1 rounded-lg group-hover:bg-yellow-500/20 transition-colors">
+            {adCooldown > 0 ? `In ${adCooldown}s` : 'WATCH'}
+          </div>
+        </button>
       </div>
     </div>
   );
@@ -573,114 +576,15 @@ function SpinView({ onReward }: GameProps) {
   );
 }
 
-function LeaderboardView() {
-  const [leaders, setLeaders] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [userAuth, setUserAuth] = useState(auth.currentUser);
 
-  useEffect(() => {
-    const unsubscribeAuth = auth.onAuthStateChanged(user => {
-      setUserAuth(user);
-    });
 
-    const q = query(
-      collection(db, 'leaderboard'),
-      orderBy('highScore', 'desc'),
-      limit(50)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const topScores = snapshot.docs.map((doc, index) => ({
-        id: doc.id,
-        rank: index + 1,
-        ...doc.data()
-      }));
-      setLeaders(topScores);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'leaderboard');
-      setLoading(false);
-    });
-
-    return () => {
-      unsubscribe();
-      unsubscribeAuth();
-    };
-  }, []);
-
-  return (
-    <div className="flex flex-col p-6 h-full text-white">
-      <div className="text-center mb-6 shrink-0 mt-2">
-        <h2 className="text-2xl font-black uppercase tracking-tight flex items-center justify-center mb-1">
-           <Trophy className="text-yellow-500 mr-2 w-6 h-6" /> Top 50 Runners
-        </h2>
-        <p className="text-zinc-400 text-xs">Highest earners in the network.</p>
-        {!userAuth && (
-          <button 
-            onClick={() => signInWithGoogle()}
-            className="mt-4 bg-white text-black px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-zinc-200 transition-colors shadow-lg"
-          >
-            Sign in with Google to save score
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto no-scrollbar pb-8 relative rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-inner">
-        {loading ? (
-          <div className="flex justify-center items-center h-40">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400"></div>
-          </div>
-        ) : leaders.length === 0 ? (
-          <div className="flex flex-col justify-center items-center h-40 text-zinc-500">
-            <Users className="w-10 h-10 mb-2 opacity-50" />
-            <p className="text-sm font-semibold">No runners yet. Be the first!</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-zinc-800/80">
-            {leaders.map((leader) => (
-              <div 
-                key={leader.id} 
-                className={`flex items-center px-4 py-3 transition-colors ${
-                  leader.id === auth.currentUser?.uid ? 'bg-cyan-950/30 border-l-2 border-cyan-500' : 'hover:bg-zinc-800/50'
-                }`}
-              >
-                <div className="w-8 shrink-0 flex justify-center">
-                  {leader.rank === 1 ? (
-                    <Trophy className="w-5 h-5 text-yellow-400" />
-                  ) : leader.rank === 2 ? (
-                     <Trophy className="w-5 h-5 text-zinc-300" />
-                  ) : leader.rank === 3 ? (
-                     <Trophy className="w-5 h-5 text-amber-700" />
-                  ) : (
-                    <span className="font-mono text-zinc-500 font-bold text-sm">#{leader.rank}</span>
-                  )}
-                </div>
-                
-                <div className="flex-1 min-w-0 px-3">
-                   <div className="flex items-center gap-2">
-                     <span className={`font-bold truncate text-sm ${leader.id === auth.currentUser?.uid ? 'text-cyan-400' : 'text-zinc-200'}`}>
-                       {leader.username}
-                     </span>
-                     {leader.id === auth.currentUser?.uid && (
-                       <span className="bg-cyan-900 text-cyan-300 text-[9px] uppercase font-black px-1.5 py-0.5 rounded">You</span>
-                     )}
-                   </div>
-                </div>
-
-                <div className="shrink-0 flex items-center justify-end">
-                  <span className="font-mono font-bold text-yellow-500 text-sm">{leader.highScore}</span>
-                  <span className="text-[10px] text-zinc-600 ml-1 font-bold">RUN</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+interface TasksViewProps {
+  onReward: (amount: number) => void;
+  onWatchAd: () => void;
+  adCooldown: number;
 }
 
-function TasksView({ onReward }: GameProps) {
+function TasksView({ onReward, onWatchAd, adCooldown }: TasksViewProps) {
   const [telegramDone, setTelegramDone] = useState(false);
   const [checking, setChecking] = useState(false);
 
@@ -712,16 +616,50 @@ function TasksView({ onReward }: GameProps) {
     }, 2000);
   };
 
+  const handleDonate = () => {
+    if (window.Telegram?.WebApp?.openTelegramLink) {
+      window.Telegram.WebApp.openTelegramLink('https://buymeacoffee.com/malthaelxgod');
+    } else {
+      window.open('https://buymeacoffee.com/malthaelxgod', '_blank');
+    }
+  };
+
   return (
     <div className="flex flex-col p-6 h-full text-white">
       <div className="text-center mb-6 shrink-0 mt-2">
-        <h2 className="text-2xl font-black uppercase tracking-tight flex items-center justify-center mb-1">
-           <ListTodo className="text-emerald-400 mr-2 w-6 h-6" /> Tasks
-        </h2>
-        <p className="text-zinc-400 text-xs">Complete simple tasks to earn more $RUN.</p>
+         <h2 className="text-2xl font-black uppercase tracking-tight flex items-center justify-center mb-1">
+            <ListTodo className="text-emerald-400 mr-2 w-6 h-6" /> Tasks
+         </h2>
+         <p className="text-zinc-400 text-xs">Complete simple tasks to earn more $RUN.</p>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar space-y-3">
+        {/* Watch Ads Task */}
+        <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+          {/* Accent indicator bar */}
+          <div className="absolute top-0 left-0 w-1 h-full bg-yellow-500" />
+          
+          <div className="flex items-center gap-3 pl-1">
+            <div className="bg-yellow-500/10 p-2.5 rounded-xl text-yellow-400 border border-yellow-500/20">
+               <Video className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="font-bold text-sm">Watch Ads</div>
+              <div className="text-xs text-zinc-500 font-medium">+350 $RUN (Repeatable)</div>
+            </div>
+          </div>
+
+          <div>
+            <button 
+              onClick={onWatchAd}
+              disabled={adCooldown > 0}
+              className="bg-yellow-500 text-black px-4.5 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-yellow-400 disabled:bg-zinc-800 disabled:text-zinc-500 transition-colors min-w-[80px]"
+            >
+              {adCooldown > 0 ? `${adCooldown}s` : 'Watch'}
+            </button>
+          </div>
+        </div>
+
         {/* Telegram Task */}
         <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-3">
@@ -748,9 +686,39 @@ function TasksView({ onReward }: GameProps) {
                 disabled={checking}
                 className="bg-white text-black px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-zinc-200 transition-colors disabled:opacity-50 min-w-[80px]"
               >
-                {checking ? 'Checking' : 'Start'}
+                {checking ? 'Checking' : 'Join'}
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Server Donation Contribution */}
+        <div className="bg-gradient-to-r from-rose-950/20 to-amber-950/20 border border-rose-900/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm relative overflow-hidden">
+          {/* Warm Pink/Rose indicator bar */}
+          <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-rose-500 to-amber-500" />
+          
+          <div className="flex items-start gap-3 pl-1">
+            <div className="bg-rose-500/10 p-2.5 rounded-xl text-rose-400 border border-rose-500/20 shrink-0">
+               <Heart className="w-5 h-5 fill-rose-500/20" />
+            </div>
+            <div>
+              <div className="font-bold text-sm text-zinc-100 flex items-center gap-1.5">
+                Support our Servers
+                <span className="text-[10px] bg-amber-400/15 text-amber-400 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider">Help Out</span>
+              </div>
+              <p className="text-xs text-zinc-400 mt-1 max-w-sm leading-relaxed">
+                We need help to keep our servers running! Tap to support us via BuyMeACoffee.
+              </p>
+            </div>
+          </div>
+
+          <div className="w-full sm:w-auto shrink-0 flex justify-end">
+            <button 
+              onClick={handleDonate}
+              className="w-full sm:w-auto bg-gradient-to-r from-rose-500 to-amber-500 text-white px-5 py-2 rounded-xl font-bold text-xs uppercase tracking-wider hover:from-rose-400 hover:to-amber-400 transition-all duration-300 shadow-md flex items-center justify-center gap-1.5"
+            >
+              <Coffee className="w-3.5 h-3.5" /> Donate
+            </button>
           </div>
         </div>
 
@@ -823,13 +791,139 @@ function WithdrawView({ walletBalance, usdValue }: { walletBalance: number, usdV
   );
 }
 
+interface AdPlayerProps {
+  onClaim: () => void;
+}
+
+function AdPlayerModal({ onClaim }: AdPlayerProps) {
+  const [secondsLeft, setSecondsLeft] = useState(5);
+
+  useEffect(() => {
+    // -------------------------------------------------------------------------
+    // SYSTEM NOTE FOR DEVELOPER:
+    // This is the ideal hook to trigger your external Ad Platform SDK programmatically.
+    // e.g., if you are using Telegram WebApp Ads, tap into `Telegram.WebApp` here
+    // or run your custom window integration method.
+    // -------------------------------------------------------------------------
+
+    if (secondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setSecondsLeft(prev => prev - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [secondsLeft]);
+
+  return (
+    <div className="absolute inset-0 z-50 bg-[#020205]/98 backdrop-blur-2xl flex flex-col items-center justify-between p-6 select-none">
+      {/* Top Bar Status */}
+      <div className="w-full flex items-center justify-between p-1">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 bg-yellow-500 rounded-full animate-ping" />
+          <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-400">Watch Ads</span>
+        </div>
+        
+        <div className="bg-zinc-900 border border-zinc-800 px-3 py-1.5 text-xs font-mono font-bold rounded-full text-zinc-300 shadow-md">
+          {secondsLeft > 0 ? (
+            <span className="flex items-center gap-1.5">
+              Available in <span className="text-yellow-400 font-black">{secondsLeft}s</span>
+            </span>
+          ) : (
+            <span className="text-emerald-400 font-extrabold flex items-center gap-1">
+              <Sparkles className="w-3 h-3 animate-bounce" /> READY TO CLAIM
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Main Ads Integration Shell */}
+      <div className="w-full max-w-sm border border-zinc-800/80 bg-zinc-900/40 rounded-3xl p-6 flex flex-col items-center text-center shadow-2xl my-auto relative overflow-hidden">
+        {/* Glow Background Accent */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 bg-yellow-500/5 blur-[50px] rounded-full pointer-events-none" />
+
+        {/* Video Icon placeholder */}
+        <div className="w-14 h-14 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-center mb-5 text-yellow-500">
+          <Video className="w-6 h-6 animate-pulse" />
+        </div>
+
+        {/* Title & Tagline */}
+        <h3 className="text-lg font-black text-white tracking-tight uppercase mb-2">
+          Watch Ads
+        </h3>
+        
+        <div className="text-xs text-zinc-400 max-w-xs leading-relaxed mb-6 px-1">
+          {/* Developer guidance helper overlay */}
+          <div className="bg-zinc-950/80 border border-zinc-800/80 p-3 rounded-xl text-left font-mono text-[10px] text-zinc-500 overflow-x-auto space-y-1">
+            <span className="text-amber-500 font-bold block">// INTEGRATE YOUR AD PROVIDER HERE</span>
+            <span className="block">e.g. Google AdSense Web SDK,</span>
+            <span className="block">Telegram WebApp Ads SDK, or any</span>
+            <span className="block">custom video/banner endpoint.</span>
+          </div>
+        </div>
+
+        {/* Playback Simulation Progress Bar */}
+        <div className="w-full bg-zinc-950 border border-zinc-900 rounded-full h-2 overflow-hidden mb-2">
+          <div 
+            className="h-full rounded-full transition-all duration-1000 ease-linear bg-yellow-500" 
+            style={{ width: `${((5 - secondsLeft) / 5) * 100}%` }}
+          />
+        </div>
+        <div className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest font-bold">
+          {secondsLeft > 0 ? 'Connecting stream...' : 'Stream completed'}
+        </div>
+      </div>
+
+      {/* Footer trigger controls */}
+      <div className="w-full max-w-sm flex flex-col gap-2 p-1 shrink-0">
+        {secondsLeft <= 0 ? (
+          <button
+            onClick={onClaim}
+            className="w-full bg-gradient-to-r from-yellow-400 via-amber-400 to-yellow-500 text-black py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all duration-300 hover:scale-[1.01] shadow-[0_4px_24px_rgba(234,179,8,0.3)] flex items-center justify-center gap-2"
+          >
+            <Sparkles className="w-4 h-4" /> Claim +350 Coins
+          </button>
+        ) : (
+          <button
+            disabled
+            className="w-full bg-zinc-900/60 border border-zinc-800 text-zinc-500 py-4 rounded-2xl font-black text-xs uppercase tracking-widest cursor-not-allowed text-center"
+          >
+            Ad finishes in {secondsLeft}s
+          </button>
+        )}
+        <p className="text-[9px] text-center text-zinc-600 font-bold uppercase tracking-widest mt-1">
+          Repeatable Reward • Earns 350 Coins instantly
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [view, setView] = useState<'GAME' | 'SPIN' | 'LEADERBOARD' | 'TASKS' | 'WITHDRAW'>('GAME');
+  const [view, setView] = useState<'GAME' | 'SPIN' | 'TASKS' | 'WITHDRAW'>('GAME');
   const [walletBalance, setWalletBalance] = useState(0);
+  const [isAdOpen, setIsAdOpen] = useState(false);
+  const [adCooldownTime, setAdCooldownTime] = useState(0);
 
   useEffect(() => {
     const saved = localStorage.getItem('wallet_balance');
     if (saved) setWalletBalance(parseInt(saved, 10));
+  }, []);
+
+  // Cooldown timer hook - synchronizes with last watched ad time
+  useEffect(() => {
+    const checkCooldown = () => {
+      const lastWatch = localStorage.getItem('last_ad_watch_time');
+      if (lastWatch) {
+        const diff = Date.now() - parseInt(lastWatch, 10);
+        const remaining = Math.max(0, 30000 - diff); // 30-second cooldown
+        setAdCooldownTime(Math.ceil(remaining / 1000));
+      } else {
+        setAdCooldownTime(0);
+      }
+    };
+
+    checkCooldown();
+    const interval = setInterval(checkCooldown, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const addFunds = useCallback((amount: number) => {
@@ -839,6 +933,18 @@ export default function App() {
       return newBal;
     });
   }, []);
+
+  const triggerAdWatch = () => {
+    if (adCooldownTime > 0) return;
+    setIsAdOpen(true);
+  };
+
+  const handleClaimReward = () => {
+    addFunds(350);
+    localStorage.setItem('last_ad_watch_time', Date.now().toString());
+    setAdCooldownTime(30);
+    setIsAdOpen(false);
+  };
 
   // Adjust exchange rate to be realistic for a clicker game ($0.0001 per RUN token)
   const usdValue = (walletBalance * 0.0001).toFixed(4);
@@ -872,13 +978,15 @@ export default function App() {
         {/* Dynamic Inner Content */}
         <div className="flex-1 overflow-y-auto no-scrollbar relative min-h-0">
           <div className="absolute inset-0 pb-10">
-             {view === 'GAME' && <GameView onReward={addFunds} />}
+             {view === 'GAME' && <GameView onReward={addFunds} onWatchAd={triggerAdWatch} adCooldown={adCooldownTime} />}
              {view === 'SPIN' && <SpinView onReward={addFunds} />}
-             {view === 'LEADERBOARD' && <LeaderboardView />}
-             {view === 'TASKS' && <TasksView onReward={addFunds} />}
+             {view === 'TASKS' && <TasksView onReward={addFunds} onWatchAd={triggerAdWatch} adCooldown={adCooldownTime} />}
              {view === 'WITHDRAW' && <WithdrawView walletBalance={walletBalance} usdValue={usdValue} />}
           </div>
         </div>
+
+        {/* Simulated Ad Player overlay block */}
+        {isAdOpen && <AdPlayerModal onClaim={handleClaimReward} />}
 
         {/* Bottom Tab Navigation */}
         <div className="h-20 shrink-0 bg-zinc-950 border-t border-zinc-800/80 flex items-center justify-around pb-safe z-20 px-1">
@@ -915,13 +1023,7 @@ export default function App() {
             <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest truncate">Draw</span>
           </button>
 
-          <button 
-            onClick={() => setView('LEADERBOARD')}
-            className={`flex flex-col items-center justify-center w-full h-full gap-1 transition-colors ${view === 'LEADERBOARD' ? 'text-yellow-400' : 'text-zinc-500 hover:text-zinc-400'}`}
-          >
-            <Trophy className={`w-5 h-5 sm:w-6 sm:h-6 ${view === 'LEADERBOARD' ? 'drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]' : ''}`} />
-            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest truncate">Ranks</span>
-          </button>
+
 
         </div>
 
