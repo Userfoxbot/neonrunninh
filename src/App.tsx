@@ -1,3 +1,11 @@
+<html>
+    <head>
+        ...
+        <script src='//libtl.com/sdk.js' data-zone='11766047' data-sdk='show_11766047'></script>
+    </head>
+    ...
+</html>
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { 
   Play, RotateCcw, Wallet, Gamepad2, Gift, 
